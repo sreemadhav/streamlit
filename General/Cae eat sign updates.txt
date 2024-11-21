@@ -1,0 +1,247 @@
+import streamlit as st
+import os
+import shutil
+import fitz
+import tempfile
+import datetime
+import pandas as pd
+import csv
+
+st.set_page_config(
+    page_title="QTG Review System",
+    page_icon="📖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Sidebar setup
+st.sidebar.header("QTG Review System")
+st.sidebar.markdown("Manage and review your QTG files efficiently.")
+
+device = st.sidebar.selectbox("Select Device", options=["Select", "FFS", "FTD"], key="device_selection")
+year = st.sidebar.selectbox("Select Year", options=["Select", "2023", "2024"], key="year_selection")
+set = st.sidebar.selectbox("Select Set", options=["Select", "Set A", "Set B", "Set C", "Set D"], key="set_selection")
+
+if device == "Select" or year == "Select" or set == "Select":
+    st.sidebar.warning("Please select a device, year, and set to proceed.")
+    st.write("### 🚫 Please select a device, year, and respective QTG set in the sidebar to continue.")
+    st.stop()
+
+# Folder setup
+base_folder = os.path.join(f"./{device}", year, set)
+folders = {
+    "source": os.path.join(base_folder, "source_folder"),
+    "pass": os.path.join(base_folder, "pass_folder"),
+    "fail": os.path.join(base_folder, "fail_folder"),
+    "signed1": os.path.join(base_folder, "signed_folder1"),
+    "signed2": os.path.join(base_folder, "signed_folder2"),
+}
+log_file = os.path.join(base_folder, "signing_log.csv")
+
+for folder in folders.values():
+    os.makedirs(folder, exist_ok=True)
+
+if not os.path.exists(log_file):
+    with open(log_file, "w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Document Name", "Signed By", "Date/Time", "Signature Stage"])
+
+st.write(f"### 📂 QTG Review System: {device} - {year} - {set}")
+
+# Utility functions
+def list_files(folder):
+    """List files in a folder."""
+    try:
+        return os.listdir(folder)
+    except FileNotFoundError:
+        return []
+
+def move_file(src, dest):
+    """Move a file from src to dest."""
+    try:
+        shutil.move(src, dest)
+        return True
+    except Exception as e:
+        st.error(f"Error moving file: {e}")
+        return False
+
+import fitz  # PyMuPDF
+import datetime
+import os
+import csv
+
+def add_signature_to_pdf(pdf_path, signature_path, signed_folder, signer_name, stage):
+    """Add a signature to a PDF with proper scaling and positioning."""
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc[0]  # Only modifying the first page for now
+
+        # Load the signature image
+        signature_img = fitz.open(signature_path)
+        
+        # Ensure the signature image is correctly sized (let's use a 150x50 area for signatures)
+        img_width = 150
+        img_height = 50
+        
+        # Ensure the signature is scaled to fit within the defined width/height
+        img_rect = signature_img[0].rect  # Get the original image dimensions
+        img_aspect_ratio = img_rect.width / img_rect.height
+        new_width = img_width
+        new_height = int(new_width / img_aspect_ratio)
+        
+        # Check if a signature already exists at the top-left (for CAE) and top-right (for EAT)
+        left_top_signature = False
+        right_top_signature = False
+        
+        # Look for any signature on the page (top-left, top-right)
+        for annot in page.annots():
+            if annot.rect.x0 < 150 and annot.rect.y0 < 150:
+                left_top_signature = True
+            if annot.rect.x1 > page.rect.width - 150 and annot.rect.y0 < 150:
+                right_top_signature = True
+        
+        # If CAE, place signature at top-left (only if not already signed)
+        if stage == "CAE" and not left_top_signature:
+            x1, y1 = 50, 50  # Top-left corner of the page
+            rect1 = fitz.Rect(x1, y1, x1 + new_width, y1 + new_height)
+            page.insert_image(rect1, filename=signature_path)
+            page.insert_text((x1, y1 + new_height + 10), f"Signed by: {signer_name} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fontsize=10)
+        
+        # If EAT, place signature at top-right (only if not already signed)
+        if stage == "EAT" and not right_top_signature:
+            x2, y2 = page.rect.width - new_width - 50, 50  # Top-right corner of the page
+            rect2 = fitz.Rect(x2, y2, x2 + new_width, y2 + new_height)
+            page.insert_image(rect2, filename=signature_path)
+            page.insert_text((x2, y2 + new_height + 10), f"Signed by: {signer_name} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fontsize=10)
+
+        # Save the signed PDF to the destination folder
+        signed_file_path = os.path.join(signed_folder, os.path.basename(pdf_path))
+        doc.save(signed_file_path)
+        doc.close()
+
+        # Log the signing action in the CSV log file
+        with open(log_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([os.path.basename(pdf_path), signer_name, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stage])
+
+        return signed_file_path
+
+    except Exception as e:
+        print(f"Error logging signing operation: {e}")
+        return None
+
+
+    # Read CSV with error handling
+try:
+    log_data = pd.read_csv(log_file)
+except pd.errors.ParserError:
+    st.error("Log file has inconsistent data. Attempting to clean...")
+    with open(log_file, "r") as file:
+        lines = file.readlines()
+    header = lines[0].strip().split(",")  # Read header
+    valid_lines = [line.strip() for line in lines if line.count(",") == len(header) - 1]
+    with open(log_file, "w") as file:
+        file.write("\n".join(valid_lines))
+    log_data = pd.read_csv(log_file)
+
+# Logging function (ensure consistent structure)
+def log_signing(file_name, signer_name, datetime, stage):
+    try:
+        with open(log_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([file_name, signer_name, datetime, stage])
+    except Exception as e:
+        st.error(f"Error writing to log file: {e}")
+
+
+# Tabs
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📂 Review Files", "🔄 Retrieve Files", "🖊️ CAE Signature", "🖊️ EAT Signature", "📊 Log"]
+)
+
+# Tab 1: Review Files
+with tab1:
+    st.header("📂 QTG Review and Classification")
+    source_files = list_files(folders["source"])
+
+    if source_files:
+        file_to_review = st.selectbox("Select a file to review", source_files)
+        status = st.radio("Mark file as", ["Pass", "Fail"])
+        if st.button("Submit Review"):
+            target_folder = folders["pass"] if status == "Pass" else folders["fail"]
+            src_path = os.path.join(folders["source"], file_to_review)
+            if move_file(src_path, target_folder):
+                st.success(f"File moved to {status} folder.")
+    else:
+        st.write("No files in the source folder.")
+
+# Tab 2: Retrieve Files
+with tab2:
+    st.header("🔄 Retrieve Files")
+    pass_files = list_files(folders["pass"])
+    fail_files = list_files(folders["fail"])
+    selected_files = st.multiselect("Select files to retrieve", pass_files + fail_files)
+
+    if st.button("Retrieve Files"):
+        for file in selected_files:
+            src_folder = folders["pass"] if file in pass_files else folders["fail"]
+            src_path = os.path.join(src_folder, file)
+            if move_file(src_path, folders["source"]):
+                st.success(f"Retrieved {file} to source folder.")
+
+# Tab 3: CAE Signature
+# Tab 3: CAE Signature
+# Tab 3: CAE Signature
+with tab3:
+    st.header("🖊️ CAE Signature")
+    signature = st.file_uploader("Upload your signature", type=["png", "jpg"], key="cae_signature")
+    name = st.text_input("Signer Name (CAE)")
+    pass_files = list_files(folders["pass"])
+
+    if pass_files:
+        # Pass a unique key for each selectbox
+        file_to_sign = st.selectbox("Select a file to sign", pass_files, key="cae_file_select")
+        if st.button("Apply CAE Signature") and signature and name:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(signature.read())
+                signed_file = add_signature_to_pdf(
+                    os.path.join(folders["pass"], file_to_sign),
+                    tmp.name,
+                    folders["signed1"],
+                    name,
+                    "CAE"
+                )
+                if signed_file:
+                    st.success(f"Signed {file_to_sign} successfully.")
+
+# Tab 4: EAT Signature
+with tab4:
+    st.header("🖊️ EAT Signature")
+    signature = st.file_uploader("Upload your signature", type=["png", "jpg"], key="eat_signature")
+    name = st.text_input("Signer Name (EAT)")
+    signed1_files = list_files(folders["signed1"])
+
+    if signed1_files:
+        # Pass a unique key for each selectbox
+        file_to_sign = st.selectbox("Select a file to sign", signed1_files, key="eat_file_select")
+        if st.button("Apply EAT Signature") and signature and name:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(signature.read())
+                signed_file = add_signature_to_pdf(
+                    os.path.join(folders["signed1"], file_to_sign),
+                    tmp.name,
+                    folders["signed2"],
+                    name,
+                    "EAT"
+                )
+                if signed_file:
+                    st.success(f"Signed {file_to_sign} successfully.")
+
+# Tab 5: Log
+with tab5:
+    st.header("📊 Signing Log")
+    try:
+        log_data = pd.read_csv(log_file)
+        st.dataframe(log_data)
+    except pd.errors.ParserError:
+        st.error("The log file has inconsistent data. Please check and correct it.")

@@ -1,0 +1,353 @@
+import streamlit as st
+import os
+import shutil
+import fitz
+import tempfile
+import datetime
+import pandas as pd
+import csv
+
+st.set_page_config(
+    page_title="QTG Review System",
+    page_icon="📖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Sidebar setup
+st.sidebar.header("QTG Review System")
+st.sidebar.markdown("Manage and review your QTG files efficiently.")
+
+device = st.sidebar.selectbox("Select Device", options=["Select", "FFS", "FTD"], key="device_selection")
+year = st.sidebar.selectbox("Select Year", options=["Select", "2023", "2024"], key="year_selection")
+set = st.sidebar.selectbox("Select Set", options=["Select", "Set A", "Set B", "Set C", "Set D"], key="set_selection")
+
+if device == "Select" or year == "Select" or set == "Select":
+    st.sidebar.warning("Please select a device, year, and set to proceed.")
+    st.write("### 🚫 Please select a device, year, and respective QTG set in the sidebar to continue.")
+    st.stop()
+
+# Folder setup
+base_folder = os.path.join(f"./{device}", year, set)
+folders = {
+    "source": os.path.join(base_folder, "source_folder"),
+    "pass": os.path.join(base_folder, "pass_folder"),
+    "fail": os.path.join(base_folder, "fail_folder"),
+    "signed1": os.path.join(base_folder, "signed_folder1"),
+    "signed2": os.path.join(base_folder, "signed_folder2"),
+}
+log_file = os.path.join(base_folder, "signing_log.csv")
+
+for folder in folders.values():
+    os.makedirs(folder, exist_ok=True)
+
+if not os.path.exists(log_file):
+    with open(log_file, "w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["Document Name", "Signed By", "Date/Time", "Signature Stage"])
+
+st.write(f"### 📂 QTG Review System: {device} - {year} - {set}")
+
+
+# Utility functions
+def list_files(folder):
+    """List files in a folder."""
+    try:
+        return os.listdir(folder)
+    except FileNotFoundError:
+        return []
+
+def move_file(src, dest):
+    """Move a file from src to dest."""
+    try:
+        shutil.move(src, dest)
+        return True
+    except PermissionError:
+        st.error(f"Permission error while moving {src} to {dest}. Please check file access.")
+        return False
+    except Exception as e:
+        st.error(f"Unexpected error: {e}")
+        return False
+
+def add_signature_to_pdf(pdf_path, signature_path, signed_folder, signer_name, stage):
+    """Add a signature to a PDF with proper scaling and positioning."""
+    try:
+        doc = fitz.open(pdf_path)
+        page = doc[0]  # Only modifying the first page for now
+
+        # Load the signature image
+        signature_img = fitz.open(signature_path)
+        
+        # Ensure the signature image is correctly sized (let's use a 150x50 area for signatures)
+        img_width = 150
+        img_height = 50
+        
+        # Ensure the signature is scaled to fit within the defined width/height
+        img_rect = signature_img[0].rect  # Get the original image dimensions
+        img_aspect_ratio = img_rect.width / img_rect.height
+        new_width = img_width
+        new_height = int(new_width / img_aspect_ratio)
+        
+        # Check if a signature already exists at the top-left (for CAE) and top-right (for EAT)
+        left_top_signature = False
+        right_top_signature = False
+        
+        # Look for any signature on the page (top-left, top-right)
+        for annot in page.annots():
+            if annot.rect.x0 < 150 and annot.rect.y0 < 150:
+                left_top_signature = True
+            if annot.rect.x1 > page.rect.width - 150 and annot.rect.y0 < 150:
+                right_top_signature = True
+        
+        # If CAE, place signature at top-left (only if not already signed)
+        if stage == "CAE" and not left_top_signature:
+            x1, y1 = 50, 50  # Top-left corner of the page
+            rect1 = fitz.Rect(x1, y1, x1 + new_width, y1 + new_height)
+            page.insert_image(rect1, filename=signature_path)
+            page.insert_text((x1, y1 + new_height + 10), f"Signed by: {signer_name} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fontsize=10)
+        
+        # If EAT, place signature at top-right (only if not already signed)
+        if stage == "EAT" and not right_top_signature:
+            x2, y2 = page.rect.width - new_width - 50, 50  # Top-right corner of the page
+            rect2 = fitz.Rect(x2, y2, x2 + new_width, y2 + new_height)
+            page.insert_image(rect2, filename=signature_path)
+            page.insert_text((x2, y2 + new_height + 10), f"Signed by: {signer_name} on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fontsize=10)
+
+        # Save the signed PDF to the destination folder
+        signed_file_path = os.path.join(signed_folder, os.path.basename(pdf_path))
+        doc.save(signed_file_path)
+        doc.close()
+
+        # Log the signing action in the CSV log file
+        with open(log_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([os.path.basename(pdf_path), signer_name, datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), stage])
+
+        return signed_file_path
+
+    except Exception as e:
+        print(f"Error logging signing operation: {e}")
+        return None
+
+    # Read CSV with error handling
+try:
+    log_data = pd.read_csv(log_file)
+except pd.errors.ParserError:
+    st.error("Log file has inconsistent data. Attempting to clean...")
+    with open(log_file, "r") as file:
+        lines = file.readlines()
+    header = lines[0].strip().split(",")  # Read header
+    valid_lines = [line.strip() for line in lines if line.count(",") == len(header) - 1]
+    with open(log_file, "w") as file:
+        file.write("\n".join(valid_lines))
+    log_data = pd.read_csv(log_file)
+
+# Logging function (ensure consistent structure)
+def log_signing(file_name, signer_name, datetime, stage):
+    try:
+        with open(log_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([file_name, signer_name, datetime, stage])
+    except Exception as e:
+        st.error(f"Error writing to log file: {e}")
+
+
+# Utility to list and sort files
+def list_files_sorted(folder):
+    """List and sort files in a folder."""
+    try:
+        files = os.listdir(folder)
+        return sorted(files)  # Sorting the files alphabetically
+    except FileNotFoundError:
+        return []
+
+def color_rows(row):
+    if row["Status"] == "Pass":
+        return ['background-color: lightgreen']*len(row)  # Green for "Pass"
+    elif row["Status"] == "Fail":
+        return ['background-color: lightcoral']*len(row)  # Red for "Fail"
+    else:
+        return ['']*len(row)  # Default color (no change)
+
+    
+# Tabs
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["📂 Review Files", "🔄 Retrieve Files", "🖊️ CAE Signature", "🖊️ EAT Signature", "📊 Signature Tracker"]
+)
+
+# Tab 1: Review Files
+with tab1:
+    st.header("📁 QTG Review and Classification")
+
+    # List files in source folder
+    st.subheader("Files in Source Folder")
+    source_files = list_files(folders["source"])  # List files in source folder
+    if source_files:
+        # Create a DataFrame from the source files
+        files_data = {
+            "File Name": source_files,
+            "Status": [""] * len(source_files)  # Placeholder for status (Pass/Fail)
+        }
+
+        df = pd.DataFrame(files_data)
+
+        # Apply row color styles based on status (you can update the status dynamically)
+        styled_df = df.style.apply(color_rows, axis=1)
+        
+        # Display the dataframe with color styling
+        st.dataframe(styled_df)
+    else:
+        st.write("No files in the source folder.")
+
+    with st.container():
+     st.subheader("1. Review QTG Files")
+     if source_files:
+         file_to_move = st.selectbox("Select the QTG to review", source_files)
+         if file_to_move:
+             pdf_file_path = os.path.join(folders["source"], file_to_move)
+             if os.path.exists(pdf_file_path):
+                 with open(pdf_file_path, "rb") as pdf_file:
+                     pdf_data = pdf_file.read()
+                     st.download_button(
+                         label="Open PDF",
+                         data=pdf_data,
+                         file_name=file_to_move,
+                         mime="application/pdf",
+                         use_container_width=True
+                     )
+         status = st.radio("Status of QTG", ["Pass", "Fail"], horizontal=True)
+         if status:  # If user selects status
+             df.loc[df['File Name'] == file_to_move, 'Status'] = status
+             styled_df = df.style.apply(color_rows, axis=1)  # Update table with colors
+             st.dataframe(styled_df)  # Re-render the table with the updated colors
+         if st.button("Submit"):
+             destination_folder = folders["pass"] if status == "Pass" else folders["fail"]
+             src_path = os.path.join(folders["source"], file_to_move)
+             dest_path = os.path.join(destination_folder, file_to_move)
+
+             if move_file(src_path, dest_path):
+                 st.success(f"Moved '{file_to_move}' to **{'Pass' if status == 'Pass' else 'Fail'}** folder.")
+                 st.rerun()  # Refresh the page
+     else:
+         st.warning("🚫 No files to move in the source folder.")
+
+
+
+# Tab 2: Retrieve Files
+with tab2:
+    st.header("🔄 Retrieve Files")
+
+    # List files in pass and fail folders
+    st.subheader("Files in Pass Folder")
+    pass_files = list_files(folders["pass"])  # List files in pass folder
+    if pass_files:
+        # Create DataFrame for pass files
+        pass_files_data = {
+            "File Name": pass_files,
+            "Status": ["Pass"] * len(pass_files)
+        }
+        df_pass = pd.DataFrame(pass_files_data)
+        styled_df_pass = df_pass.style.apply(color_rows, axis=1)
+        st.dataframe(styled_df_pass)
+    else:
+        st.write("No files in the pass folder.")
+
+    st.subheader("Files in Fail Folder")
+    fail_files = list_files(folders["fail"])  # List files in fail folder
+    if fail_files:
+        # Create DataFrame for fail files
+        fail_files_data = {
+            "File Name": fail_files,
+            "Status": ["Fail"] * len(fail_files)
+        }
+        df_fail = pd.DataFrame(fail_files_data)
+        styled_df_fail = df_fail.style.apply(color_rows, axis=1)
+        st.dataframe(styled_df_fail)
+    else:
+        st.write("No files in the fail folder.")
+
+    selected_files = st.multiselect("Select files to retrieve", pass_files + fail_files)
+
+    if st.button("Retrieve Files"):
+        for file in selected_files:
+            src_folder = folders["pass"] if file in pass_files else folders["fail"]
+            src_path = os.path.join(src_folder, file)
+            if move_file(src_path, folders["source"]):
+                st.success(f"Retrieved {file} to source folder.")
+
+
+
+# Tab 3: CAE Signature
+with tab3:
+    st.header("🖊️ CAE Signature")
+    
+    # List files in pass folder for signing, displayed as a table
+    st.subheader("Files in Pass Folder for CAE Signature")
+    pass_files = list_files_sorted(folders["pass"])  # Sorted files in pass folder
+    if pass_files:
+        df_pass = pd.DataFrame(pass_files, columns=["File Name"])
+        st.dataframe(df_pass)  # Display as a table
+        st.write("---")  # Add a horizontal line for separation
+    else:
+        st.write("No files in the pass folder.")
+
+    signature = st.file_uploader("Upload your signature", type=["png", "jpg"], key="cae_signature_uploader")
+    name = st.text_input("Signer Name (CAE)", key="cae_name_input")
+
+    if pass_files:
+        file_to_sign = st.selectbox("Select a file to sign", pass_files, key="cae_file_selectbox")
+        if st.button("Apply CAE Signature", key="apply_cae_signature_button") and signature and name:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(signature.read())
+                signed_file = add_signature_to_pdf(
+                    os.path.join(folders["pass"], file_to_sign),
+                    tmp.name,
+                    folders["signed1"],
+                    name,
+                    "CAE"
+                )
+                if signed_file:
+                    st.success(f"Signed {file_to_sign} successfully.")
+
+
+# Tab 4: EAT Signature
+with tab4:
+    st.header("🖊️ EAT Signature")
+    
+    # List files in signed1 folder for EAT Signature, displayed as a table
+    st.subheader("Files in Signed Folder 1 for EAT Signature")
+    signed1_files = list_files_sorted(folders["signed1"])  # Sorted files in signed1 folder
+    if signed1_files:
+        df_signed1 = pd.DataFrame(signed1_files, columns=["File Name"])
+        st.dataframe(df_signed1)  # Display as a table
+        st.write("---")  # Add a horizontal line for separation
+    else:
+        st.write("No files in the signed folder.")
+
+    signature = st.file_uploader("Upload your signature", type=["png", "jpg"], key="eat_signature_uploader")
+    name = st.text_input("Signer Name (EAT)", key="eat_name_input")
+
+    if signed1_files:
+        file_to_sign = st.selectbox("Select a file to sign", signed1_files, key="eat_file_selectbox")
+        if st.button("Apply EAT Signature", key="apply_eat_signature_button") and signature and name:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                tmp.write(signature.read())
+                signed_file = add_signature_to_pdf(
+                    os.path.join(folders["signed1"], file_to_sign),
+                    tmp.name,
+                    folders["signed2"],
+                    name,
+                    "EAT"
+                )
+                if signed_file:
+                    st.success(f"Signed {file_to_sign} successfully.")
+# Tab 5: Log
+with tab5:
+    st.header("📊 Signing Log")
+    
+    # Show the log data
+    try:
+        log_data = pd.read_csv(log_file)
+        st.dataframe(log_data)
+    except pd.errors.ParserError:
+        st.error("The log file has inconsistent data. Please check and correct it.")

@@ -17,41 +17,24 @@ st.set_page_config(
 
 st.sidebar.header("QTG Review System")
 st.sidebar.markdown("Manage and review your QTG files efficiently.")
-device = st.sidebar.selectbox("Select Device", options=["Select", "FFS", "FTD"], key="device_selection")
-year = st.sidebar.selectbox("Select Year", options=["Select", "2023", "2024"], key="year_selection")
-set = st.sidebar.selectbox("Select Set", options=["Select", "Set A", "Set B", "Set C", "Set D"], key="set_selection")
-if device == "Select" or year == "Select" or set == "Select":
-    st.sidebar.warning("Please select a device, year, and set to proceed.")
-    st.write("### 🚫 Please select a device, year, and respective QTG set in the sidebar to continue.")
-    st.stop()  
 
-base_folder = os.path.join(f"./{device}", year, set)
-source_folder = os.path.join(base_folder, "source_folder")
-pass_folder = os.path.join(base_folder, "pass_folder")
-fail_folder = os.path.join(base_folder, "fail_folder")
-signed_folder = os.path.join(base_folder, "signed_folder")
-log_file = os.path.join(base_folder, "signing_log.csv")
+source_folder = "source_folder"
+pass_folder = "pass_folder"
+fail_folder = "fail_folder"
+signed_folder = "signed_folder"
+log_file = "signing_log.csv"
+
+
 for folder in [source_folder, pass_folder, fail_folder, signed_folder]:
     if not os.path.exists(folder):
         os.makedirs(folder)
 
 if not os.path.exists(log_file):
-    with open(log_file, mode="w", newline="") as file:
+    with open(log_file, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["Document Name", "Signed By", "Date/Time"])
 
-if "update" not in st.session_state:
-    st.session_state["update"] = False
-
-if st.session_state["update"]:
-    st.session_state["update"] = False
-    st.experimental_rerun()
-    
-st.write(f"### 📂 QTG Review System: {device} - {year} - {set}")
-st.markdown(f"#### Base Folder: {base_folder}")
-
 def list_files(folder):
-    """List files in a folder."""
     try:
         return os.listdir(folder)
     except FileNotFoundError:
@@ -133,14 +116,16 @@ with tab1:
     st.header("📁 QTG Review and Classification")
 
     with st.container():
-        st.subheader("Review QTG Files")
+        st.subheader("1. Review QTG Files")
         files = list_files(source_folder)
         
         if files:
             file_to_move = st.selectbox("Select the QTG to review", files)
+
             if file_to_move:
                 pdf_file_path = os.path.join(source_folder, file_to_move)
                 if os.path.exists(pdf_file_path):
+                  
                     with open(pdf_file_path, "rb") as pdf_file:
                         pdf_data = pdf_file.read()
                         st.download_button(
@@ -150,51 +135,52 @@ with tab1:
                             mime="application/pdf",
                             use_container_width=True
                         )
+
             status = st.radio("Status of QTG", ["Pass", "Fail"], horizontal=True)
+
             if st.button("Submit"):
                 destination_folder = pass_folder if status == "Pass" else fail_folder
                 src_path = os.path.join(source_folder, file_to_move)
                 dest_path = os.path.join(destination_folder, file_to_move)
-
                 if move_file(src_path, dest_path):
                     st.success(f"Moved '{file_to_move}' to **{'Pass' if status == 'Pass' else 'Fail'}** folder.")
-                    st.rerun() 
+                    st.rerun()  
         else:
             st.warning("🚫 No files to move in the source folder.")
 
-            
-
     st.markdown("---")
+
     with st.container():
         st.subheader("2. View Folder Contents")
+        
         
         st.markdown("### 📂 Source Folder")
         source_data = create_file_dataframe(source_folder)
         if not source_data.empty:
-            st.dataframe(source_data) 
+            st.dataframe(source_data)  
         else:
             st.write("No files in source folder.")
 
         st.markdown("---")
+
         st.markdown("### Pass Folder")
         pass_data = create_file_dataframe(pass_folder)
         if not pass_data.empty:
-            st.dataframe(pass_data) 
+            st.dataframe(pass_data)  
         else:
             st.write("No files in pass folder.")
 
         st.markdown("---")
+
         st.markdown("### Fail Folder")
         fail_data = create_file_dataframe(fail_folder)
         if not fail_data.empty:
-            st.dataframe(fail_data) 
+            st.dataframe(fail_data)  
         else:
             st.write("No files in fail folder.")
 
 with tab2:
     st.header("🔄 Retrieve Files to Source Folder")
-
-    retrieved_files = []  # Initialize the list to track moved files
 
     with st.container():
         st.subheader("1. Select Files to Retrieve")
@@ -218,12 +204,16 @@ with tab2:
             selected_fail = st.multiselect(
                 "Select files to retrieve from Fail folder:",
                 fail_files,
-                key="fail_folder_multiselect",  
+                key="fail_folder_multiselect", 
             )
         else:
             st.write("No files to retrieve from Fail folder.")
 
+    
         if st.button("Retrieve Selected Files"):
+            retrieved_files = []
+
+         
             if selected_pass:
                 moved_pass = retrieve_files(selected_pass, pass_folder, source_folder)
                 retrieved_files.extend(moved_pass)
@@ -236,6 +226,36 @@ with tab2:
                 st.success(f"Retrieved files: {', '.join(retrieved_files)} back to the source folder!")
             else:
                 st.info("ℹ️ No files selected for retrieval.")
+
+    st.markdown("---") 
+
+    with st.container():
+        st.subheader("2. Updated Folder Contents")
+        
+        st.markdown("### 📂 Source Folder")
+        source_data = create_file_dataframe(source_folder)
+        if not source_data.empty:
+            st.dataframe(source_data)
+        else:
+            st.write("No files in source folder.")
+
+        st.markdown("---")
+
+        st.markdown("### Pass Folder")
+        pass_data = create_file_dataframe(pass_folder)
+        if not pass_data.empty:
+            st.dataframe(pass_data) 
+        else:
+            st.write("No files in pass folder.")
+
+        st.markdown("---")
+
+        st.markdown("### Fail Folder")
+        fail_data = create_file_dataframe(fail_folder)
+        if not fail_data.empty:
+            st.dataframe(fail_data)
+        else:
+            st.write("No files in fail folder.")
 
 
 with tab3:
@@ -273,13 +293,7 @@ with tab3:
 with tab4:
     st.header("📊 Signing Log")
     try:
-        if os.path.exists(log_file):
-            log_data = pd.read_csv(log_file)
-            if log_data.empty:
-                st.warning("The signing log is empty.")
-            else:
-                st.dataframe(log_data)
-        else:
-            st.warning("The signing log file does not exist.")
+        log_data = pd.read_csv(log_file)
+        st.dataframe(log_data)
     except Exception as e:
         st.error(f"Error loading signing log: {e}")

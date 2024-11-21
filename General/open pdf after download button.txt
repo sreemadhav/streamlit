@@ -1,0 +1,199 @@
+import streamlit as st
+import os
+import shutil
+
+# Set the page configuration
+st.set_page_config(
+    page_title="QTG Review System",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Define folder paths
+source_folder = "source_folder"
+pass_folder = "pass_folder"
+fail_folder = "fail_folder"
+
+# Function to safely list directory contents
+def list_files(folder):
+    try:
+        return os.listdir(folder)
+    except FileNotFoundError:
+        return []
+
+# Function to move a file
+def move_file(src, dest):
+    try:
+        shutil.move(src, dest)
+        return True
+    except Exception as e:
+        st.error(f"Error moving file {src} to {dest}: {e}")
+        return False
+
+# Function to retrieve selected files
+def retrieve_files(selected_files, src_folder, dest_folder):
+    moved_files = []
+    for item in selected_files:
+        src_path = os.path.join(src_folder, item)
+        dest_path = os.path.join(dest_folder, item)
+        if move_file(src_path, dest_path):
+            moved_files.append(item)
+    return moved_files
+
+# Sidebar for Navigation (optional)
+st.sidebar.header("QTG Review System")
+st.sidebar.markdown("Manage and review your QTG files efficiently.")
+
+# Main Layout with Tabs
+tab1, tab2 = st.tabs(["📂 Manage QTG Files", "🔄 Retrieve Files"])
+
+with tab1:
+    st.header("📁 QTG Review and Classification")
+
+    # Section to Review and Move Files
+    with st.container(border=True):
+        st.subheader("1. Review QTG Files")
+        files = list_files(source_folder)
+        
+        if files:
+            # Select a file to review
+            file_to_move = st.selectbox("Select the QTG to review", files)
+            
+            # Select status
+            status = st.radio("Status of QTG", ["Pass", "Fail"], horizontal=True)
+            
+            # Button to open the selected PDF
+            pdf_file_path = os.path.join(source_folder, file_to_move)
+            if os.path.exists(pdf_file_path):
+                # Create a button to open the PDF
+                if st.button("Open PDF"):
+                    with open(pdf_file_path, "rb") as pdf_file:
+                        btn = st.download_button(
+                            label="Download PDF",
+                            data=pdf_file,
+                            file_name=file_to_move,
+                            mime='application/pdf'
+                        )
+            
+            # Submit button to move the file
+            if st.button("Submit"):
+                destination_folder = pass_folder if status == "Pass" else fail_folder
+                src_path = os.path.join(source_folder, file_to_move)
+                dest_path = os.path.join(destination_folder, file_to_move)
+                
+                if move_file(src_path, dest_path):
+                    st.success(f"Moved '{file_to_move}' to **{'Pass' if status == 'Pass' else 'Fail'}** folder.")
+        else:
+            st.warning("🚫 No files to move in the source folder.")
+
+    st.markdown("---")  # Separator
+
+    # Section to Display Folder Contents
+    with st.container(border=True):
+        st.subheader("2. View Folder Contents")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("### 📂 Source Folder")
+            source_contents = list_files(source_folder)
+            if source_contents:
+                for item in source_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in source folder.")
+
+        with col2:
+            st.markdown("### Pass Folder")
+            pass_contents = list_files(pass_folder)
+            if pass_contents:
+                for item in pass_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in pass folder.")
+
+        with col3:
+            st.markdown("### Fail Folder")
+            fail_contents = list_files(fail_folder)
+            if fail_contents:
+                for item in fail_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in fail folder.")
+
+with tab2:
+    st.header("🔄 Retrieve Files to Source Folder")
+
+    # Section to Retrieve Files
+    with st.container(border=True):
+        st.subheader("1. Select Files to Retrieve")
+
+        # Retrieve from Pass Folder
+        st.markdown("#### 📂 Files in Pass Folder")
+        pass_files = list_files(pass_folder)
+        selected_pass = []
+        if pass_files:
+            selected_pass = st.multiselect("Select files to retrieve from Pass folder:", pass_files)
+        else:
+            st.write("No files to retrieve from Pass folder.")
+
+        # Retrieve from Fail Folder
+        st.markdown("#### Files in Fail Folder")
+        fail_files = list_files(fail_folder)
+        selected_fail = []
+        if fail_files:
+            selected_fail = st.multiselect("Select files to retrieve from Fail folder:", fail_files)
+        else:
+            st.write("No files to retrieve from Fail folder.")
+
+        # Button to retrieve selected files
+        if st.button("Retrieve Selected Files"):
+            retrieved_files = []
+
+            # Retrieve from Pass Folder
+            if selected_pass:
+                moved_pass = retrieve_files(selected_pass, pass_folder, source_folder)
+                retrieved_files.extend(moved_pass)
+
+            # Retrieve from Fail Folder
+            if selected_fail:
+                moved_fail = retrieve_files(selected_fail, fail_folder, source_folder)
+                retrieved_files.extend(moved_fail)
+
+            if retrieved_files:
+                st.success(f"Retrieved files: {', '.join(retrieved_files)} back to the source folder!")
+            else:
+                st.info("ℹ️ No files selected for retrieval.")
+
+    st.markdown("---")  # Separator
+
+    # Section to Display Updated Folder Contents
+    with st.container(border=True):
+        st.subheader("2. Updated Folder Contents")
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.markdown("### 📂 Source Folder")
+            source_contents = list_files(source_folder)
+            if source_contents:
+                for item in source_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in source folder.")
+
+        with col2:
+            st.markdown("### Pass Folder")
+            pass_contents = list_files(pass_folder)
+            if pass_contents:
+                for item in pass_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in pass folder.")
+
+        with col3:
+            st.markdown("### Fail Folder")
+            fail_contents = list_files(fail_folder)
+            if fail_contents:
+                for item in fail_contents:
+                    st.markdown(f"- **{item}**")
+            else:
+                st.write("No files in fail folder.")
